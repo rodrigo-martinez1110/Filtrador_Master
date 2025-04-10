@@ -120,9 +120,9 @@ if arquivo_novo:
         df_novo = df_novo.loc[df_novo['MG_Emprestimo_Disponivel'] < valor_limite]
         colunas_para_merge = ['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
                           'Vinculo_Servidor', 'Lotacao', 'Secretaria']
-
-        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel')
-        df_novo = df_novo[colunas_para_merge].drop_duplicates(subset='CPF', ascending=False)
+        
+        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)  # ou outra coluna de interesse
+        df_novo = df_novo[colunas_para_merge].drop_duplicates(subset='CPF', keep='first')
         
         lista_novos.append(df_novo)
 
