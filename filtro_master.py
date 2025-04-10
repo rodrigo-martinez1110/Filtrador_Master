@@ -116,13 +116,13 @@ if arquivo_novo:
     lista_novos = []
     for arq in arquivo_novo:
         df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
-        novo['CPF'] = novo['CPF'].str.replace(r'\D', '', regex=True)
-        novo = novo.loc[novo['MG_Emprestimo_Disponivel'] < valor_limite]
+        df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
+        df_novo = df_novo.loc[novo['MG_Emprestimo_Disponivel'] < valor_limite]
         colunas_para_merge = ['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
                           'Vinculo_Servidor', 'Lotacao', 'Secretaria']
 
-        novo = novo.sort_values(by='MG_Emprestimo_Disponivel')
-        novo = novo[colunas_para_merge].drop_duplicates(subset='CPF', ascending=False)
+        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel')
+        df_novo = df_novo[colunas_para_merge].drop_duplicates(subset='CPF', ascending=False)
         
         lista_novos.append(df_novo)
 
