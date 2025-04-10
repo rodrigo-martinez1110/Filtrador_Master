@@ -121,7 +121,7 @@ if arquivo_novo:
         colunas_para_merge = ['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
                           'Vinculo_Servidor', 'Lotacao', 'Secretaria']
 
-        novo = novo.sort_values(by='MG_Emprestimo_Disponivel']
+        novo = novo.sort_values(by='MG_Emprestimo_Disponivel')
         novo = novo[colunas_para_merge].drop_duplicates(subset='CPF', ascending=False)
         
         lista_novos.append(df_novo)
