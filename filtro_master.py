@@ -117,7 +117,7 @@ if arquivo_novo:
     for arq in arquivo_novo:
         df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
         df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
-        df_novo = df_novo.loc[novo['MG_Emprestimo_Disponivel'] < valor_limite]
+        df_novo = df_novo.loc[df_novo['MG_Emprestimo_Disponivel'] < valor_limite]
         colunas_para_merge = ['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
                           'Vinculo_Servidor', 'Lotacao', 'Secretaria']
 
