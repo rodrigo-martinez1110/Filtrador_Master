@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-from io import StringIO
 from datetime import datetime
 
 st.set_page_config(page_title="Processador de Arquivos Master", layout="wide")
@@ -23,129 +22,104 @@ colunas_finais = [
     'Campanha'
 ]
 
-def extrair_informacoes(item):
-    if pd.notna(item):
-        match = re.search(r'(\d+)x: ([\d.,]+) \(parcela: ([\d.,]+)\)', item)
-        if match:
-            parcelas = int(match.group(1))
-            valor_liberado = float(match.group(2).replace(',', ''))
-            valor_parcela = float(match.group(3).replace(',', ''))
-            return parcelas, valor_liberado, valor_parcela
-    return None, None, None
+def encontrar_melhor_item(linha):
+    maior_parcela = 0
+    melhor_item = None
+    for item in linha:
+        if pd.notna(item):
+            match = re.search(r'(\d+)x:', str(item))
+            if match:
+                parcela = int(match.group(1))
+                if parcela > maior_parcela:
+                    maior_parcela = parcela
+                    melhor_item = item
+    return melhor_item
 
-st.sidebar.subheader("📂 Arquivos Master")
-uploaded_files = st.sidebar.file_uploader("Selecione os arquivos Master", type="csv", accept_multiple_files=True)
+@st.cache_data
+def processar_arquivos(files):
+    resultado = []
+    progress = st.progress(0)
 
-st.sidebar.write("---")
+    for i, file in enumerate(files):
+        df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
 
-st.sidebar.subheader("📂 Arquivos com Margem")
-arquivo_novo = st.sidebar.file_uploader("Arquivo com margem (opcional)", type="csv", accept_multiple_files=True)
+        if 'Observacoes' in df.columns:
+            colunas_separadas = df['Observacoes'].str.split('|', expand=True)
+            colunas_separadas.columns = [f'Observacao_{i+1}' for i in range(colunas_separadas.shape[1])]
+            df = pd.concat([df, colunas_separadas], axis=1)
 
-st.sidebar.write("---")
-st.sidebar.subheader("Filtros")
-apenas_saque_complementar = st.sidebar.checkbox("Saldo Devedor maior que 0")
+            colunas_observacoes = [col for col in df.columns if col.startswith("Observacao_")]
+            df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
 
-equipes_konsi = ['outbound', 'csapp', 'csport', 'cscdx', 'csativacao', 'cscp']
-equipe = st.sidebar.selectbox("Selecione a Equipe", equipes_konsi)
+            df['Melhor_Item'] = df['Melhor_Item'].fillna('')
+            extracoes = df['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)')
 
-base_final = pd.DataFrame()
-convenio = "Arquivo"
+            df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
+            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'].str.replace(',', ''), errors='coerce')
+            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'].str.replace(',', ''), errors='coerce')
 
-# Processa base principal se enviada
-if uploaded_files:
-    lista = []
-    for uploaded_file in uploaded_files:
-        df = pd.read_csv(uploaded_file, sep=',', encoding='latin1', low_memory=False)
-        lista.append(df)
+        df = df.loc[~df['MG_Beneficio_Saque_Disponivel'].isna()]
+        df = df.loc[df['valor_liberado_beneficio'] > 0]
 
-    base = pd.concat(lista)
-    convenio = base['Convenio'].iloc[0] if 'Convenio' in base.columns else 'Arquivo'
+        df['CPF'] = df['CPF'].str.replace(r'\D', '', regex=True)
+        df['Nome_Cliente'] = df['Nome_Cliente'].str.title()
 
-    colunas_separadas = base['Observacoes'].str.split('|', expand=True)
-    colunas_separadas.columns = [f'Observacao_{i+1}' for i in range(colunas_separadas.shape[1])]
-    base = pd.concat([base, colunas_separadas], axis=1)
-
-    def encontrar_melhor_item(linha):
-        maior_parcela = 0
-        melhor_item = None
-        for item in linha:
-            if pd.notna(item):
-                match = re.search(r'(\d+)x:', str(item))
-                if match:
-                    parcela = int(match.group(1))
-                    if parcela > maior_parcela:
-                        maior_parcela = parcela
-                        melhor_item = item
-        return melhor_item
-
-    colunas_observacoes = [col for col in base.columns if col.startswith("Observacao_")]
-    base['Melhor_Item'] = base[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
-
-    base = base[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
+        df = df[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
                  'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
                  'MG_Beneficio_Saque_Total', 'MG_Beneficio_Saque_Disponivel',
                  'MG_Cartao_Total', 'MG_Cartao_Disponivel',
                  'Convenio', 'Vinculo_Servidor', 'Lotacao', 'Secretaria',
-                 'Melhor_Item', 'Saldo_Devedor']]
+                 'valor_liberado_beneficio', 'valor_parcela_beneficio', 'prazo_beneficio', 'Saldo_Devedor']]
 
-    base[['prazo_beneficio', 'valor_liberado_beneficio', 'valor_parcela_beneficio']] = base['Melhor_Item'].apply(
-        lambda x: pd.Series(extrair_informacoes(x))
-    )
+        resultado.append(df)
+        progress.progress((i + 1) / len(files))
 
-    base['prazo_beneficio'] = base['prazo_beneficio'].astype(str).str.replace(".0", "")
-    base['CPF'] = base['CPF'].str.replace(r'\D', '', regex=True)
-    base['Nome_Cliente'] = base['Nome_Cliente'].str.title()
-    base = base.loc[~base['MG_Beneficio_Saque_Disponivel'].isna()]
-    base = base.loc[base['valor_liberado_beneficio'] > 0]
+    return pd.concat(resultado, ignore_index=True)
 
-    base_final = base[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
-                       'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
-                       'MG_Beneficio_Saque_Total', 'MG_Beneficio_Saque_Disponivel',
-                       'MG_Cartao_Total', 'MG_Cartao_Disponivel',
-                       'Convenio', 'Vinculo_Servidor', 'Lotacao', 'Secretaria',
-                       'valor_liberado_beneficio', 'valor_parcela_beneficio', 'prazo_beneficio', 'Saldo_Devedor']]
+# Sidebar
+st.sidebar.subheader("📂 Arquivos Master")
+uploaded_files = st.sidebar.file_uploader("Selecione os arquivos Master", type="csv", accept_multiple_files=True)
 
+st.sidebar.subheader("📂 Arquivos com Margem")
+arquivo_novo = st.sidebar.file_uploader("Arquivo com margem (opcional)", type="csv", accept_multiple_files=True)
+
+st.sidebar.subheader("Filtros")
+apenas_saque_complementar = st.sidebar.checkbox("Saldo Devedor maior que 0")
+equipes_konsi = ['outbound', 'csapp', 'csport', 'cscdx', 'csativacao', 'cscp']
+equipe = st.sidebar.selectbox("Selecione a Equipe", equipes_konsi)
+comissao_banco = st.sidebar.number_input("Comissão do banco (%): ", value=0.00) / 100
+comissao_minima = st.sidebar.number_input("Comissão mínima: ", value=0.0)
+
+# Processamento principal
+base_final = pd.DataFrame()
+
+if uploaded_files:
+    base_final = processar_arquivos(uploaded_files)
     if apenas_saque_complementar:
         base_final = base_final.loc[base_final['Saldo_Devedor'] > 0]
-
     st.success("Arquivo Master processado com sucesso!")
 
-# Processa arquivo de margem separadamente se enviado
 if arquivo_novo:
-    valor_limite = st.sidebar.number_input("Valor Máximo de Margem", value=0.0)
-    lista_novos = []
+    valor_limite = st.sidebar.number_input("Valor Máximo de Margem Empréstimo", value=0.0)
+    novos_resultados = []
     for arq in arquivo_novo:
         df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
         df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
-        df_novo = df_novo.loc[df_novo['MG_Emprestimo_Disponivel'] < valor_limite]
-        colunas_para_merge = ['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
-                          'Vinculo_Servidor', 'Lotacao', 'Secretaria']
-        
-        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)  # ou outra coluna de interesse
-        df_novo = df_novo[colunas_para_merge].drop_duplicates(subset='CPF', keep='first')
-        
-        lista_novos.append(df_novo)
+        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)
+        df_novo = df_novo[['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']].drop_duplicates('CPF')
+        novos_resultados.append(df_novo)
 
-    novo = pd.concat(lista_novos)
-
-    
+    novo = pd.concat(novos_resultados, ignore_index=True)
 
     csv_novo = novo.to_csv(sep=';', index=False).encode('utf-8')
-    st.sidebar.download_button(
-        label="📥 Baixar Arquivo de Margem (Novo)",
-        data=csv_novo,
-        file_name=f'{convenio} - MG EMPRESTIMO.csv',
-        mime='text/csv'
-    )
+    st.sidebar.download_button("📥 Baixar Arquivo de Margem (Novo)", data=csv_novo, file_name=f'MG_EMP_CSV.csv', mime='text/csv')
 
-    # Faz merge se base principal estiver presente
     if not base_final.empty:
         base_final = base_final.merge(novo, on='CPF', how='left', suffixes=('', '_novo'))
         for col in ['MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']:
             base_final[col] = base_final[f"{col}_novo"].combine_first(base_final[col])
             base_final.drop(columns=[f"{col}_novo"], inplace=True)
 
-# Finalização e exportação
 if not base_final.empty:
     for col in colunas_finais:
         if col not in base_final.columns:
@@ -154,17 +128,18 @@ if not base_final.empty:
     base_final = base_final[colunas_finais]
     data_hoje = datetime.today().strftime('%d%m%Y')
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
+    base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
+
+    base_final = base_final.query('MG_Emprestimo_Disponivel <= @valor_limite')
+    base_final = base_final.query('comissao_beneficio >= @comissao_minima')
+
+    base_final['MG_Emprestimo_Disponivel'] = 0
 
     st.subheader("📊 Dados Processados")
-    st.dataframe(base_final)
+    st.dataframe(base_final.head(1000))
     st.write(base_final.shape)
 
     csv = base_final.to_csv(sep=';', index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar Resultado CSV",
-        data=csv,
-        file_name=f'{convenio} BENEFICIO - {equipe}.csv',
-        mime='text/csv'
-    )
+    st.download_button("📥 Baixar Resultado CSV", data=csv, file_name=f'{base_final["Convenio"].iloc[0]}_BENEFICIO_{equipe}.csv', mime='text/csv')
 else:
     st.info("Faça o upload de pelo menos um arquivo Master ou de Margem.")
