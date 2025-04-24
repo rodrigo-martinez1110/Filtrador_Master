@@ -119,6 +119,7 @@ if arquivo_novo:
         for col in ['MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']:
             base_final[col] = base_final[f"{col}_novo"].combine_first(base_final[col])
             base_final.drop(columns=[f"{col}_novo"], inplace=True)
+        base_final = base_final.query('MG_Emprestimo_Disponivel <= @valor_limite')
 
 if not base_final.empty:
     for col in colunas_finais:
@@ -130,7 +131,7 @@ if not base_final.empty:
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
     base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
 
-    base_final = base_final.query('MG_Emprestimo_Disponivel <= @valor_limite')
+    
     base_final = base_final.query('comissao_beneficio >= @comissao_minima')
 
     base_final['MG_Emprestimo_Disponivel'] = 0
