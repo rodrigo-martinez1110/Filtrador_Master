@@ -87,9 +87,9 @@ st.sidebar.subheader("Filtros")
 with st.sidebar.expander("Filtradores"):
     apenas_saque_complementar = st.checkbox("Saldo Devedor maior que 0")
     equipes_konsi = ['outbound', 'csapp', 'csport', 'cscdx', 'csativacao', 'cscp']
-    equipe = selectbox("Selecione a Equipe", equipes_konsi)
-    comissao_banco = number_input("Comissão do banco (%): ", value=0.00) / 100
-    comissao_minima = number_input("Comissão mínima: ", value=0.0)
+    equipe = st.selectbox("Selecione a Equipe", equipes_konsi)
+    comissao_banco = st.number_input("Comissão do banco (%): ", value=0.00) / 100
+    comissao_minima = st.number_input("Comissão mínima: ", value=0.0)
     
 
 # Processamento principal
@@ -129,7 +129,7 @@ if not base_final.empty:
             base_final[col] = None
 
     base_final = base_final[colunas_finais]
-    base['banco_beneficio'] = '243'
+    base_final['banco_beneficio'] = '243'
     data_hoje = datetime.today().strftime('%d%m%Y')
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
     base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
