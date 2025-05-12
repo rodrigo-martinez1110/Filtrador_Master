@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import re
+import csv
+from io import StringIO
 from datetime import datetime
 
 st.set_page_config(page_title="Processador de Arquivos Master", layout="wide")
@@ -22,6 +24,12 @@ colunas_finais = [
     'Campanha'
 ]
 
+def detectar_separador(file):
+    amostra = file.read(1024).decode('latin1')
+    file.seek(0)
+    delimitador = csv.Sniffer().sniff(amostra).delimiter
+    return delimitador
+
 def encontrar_melhor_item(linha):
     maior_parcela = 0
     melhor_item = None
@@ -41,7 +49,8 @@ def processar_arquivos(files):
     progress = st.progress(0)
 
     for i, file in enumerate(files):
-        df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
+        sep = detectar_separador(file)
+        df = pd.read_csv(file, sep=sep, encoding='latin1', low_memory=False)
 
         if 'Observacoes' in df.columns:
             colunas_separadas = df['Observacoes'].str.split('|', expand=True)
@@ -90,7 +99,6 @@ with st.sidebar.expander("Filtradores"):
     equipe = st.selectbox("Selecione a Equipe", equipes_konsi)
     comissao_banco = st.number_input("Comissão do banco (%): ", value=0.00) / 100
     comissao_minima = st.number_input("Comissão mínima: ", value=0.0)
-    
 
 # Processamento principal
 base_final = pd.DataFrame()
@@ -105,7 +113,8 @@ if arquivo_novo:
     valor_limite = st.sidebar.number_input("Valor Máximo de Margem Empréstimo", value=0.0)
     novos_resultados = []
     for arq in arquivo_novo:
-        df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
+        sep_novo = detectar_separador(arq)
+        df_novo = pd.read_csv(arq, sep=sep_novo, encoding='latin1', low_memory=False)
         df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
         df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)
         df_novo = df_novo[['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']].drop_duplicates('CPF')
@@ -134,9 +143,7 @@ if not base_final.empty:
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
     base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
 
-    
     base_final = base_final.query('comissao_beneficio >= @comissao_minima')
-
     base_final['MG_Emprestimo_Disponivel'] = 0
 
     st.subheader("📊 Dados Processados")
