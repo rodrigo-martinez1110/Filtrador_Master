@@ -147,3 +147,5 @@ if not base_final.empty:
     st.download_button("📥 Baixar Resultado CSV", data=csv, file_name=f'{base_final["Convenio"].iloc[0]}_BENEFICIO_{equipe}.csv', mime='text/csv')
 else:
     st.info("Faça o upload de pelo menos um arquivo Master ou de Margem.")
+
+st.write(base_final)
