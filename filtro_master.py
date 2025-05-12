@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-import csv
-from io import StringIO
 from datetime import datetime
 
 st.set_page_config(page_title="Processador de Arquivos Master", layout="wide")
@@ -24,24 +22,23 @@ colunas_finais = [
     'Campanha'
 ]
 
-def detectar_separador(file):
-    amostra = file.read(1024).decode('latin1')
-    file.seek(0)
-    delimitador = csv.Sniffer().sniff(amostra).delimiter
-    return delimitador
-
 def encontrar_melhor_item(linha):
     maior_parcela = 0
     melhor_item = None
     for item in linha:
         if pd.notna(item):
-            match = re.search(r'(\d+)x:', str(item))
+            match = re.search(r'(\d+)x', str(item))
             if match:
                 parcela = int(match.group(1))
                 if parcela > maior_parcela:
                     maior_parcela = parcela
                     melhor_item = item
     return melhor_item
+
+def detectar_separador(file):
+    sample = file.read(2048).decode('latin1')
+    file.seek(0)
+    return ';' if sample.count(';') > sample.count(',') else ','
 
 @st.cache_data
 def processar_arquivos(files):
@@ -61,16 +58,23 @@ def processar_arquivos(files):
             df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
 
             df['Melhor_Item'] = df['Melhor_Item'].fillna('')
-            extracoes = df['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)')
+            extracoes = df['Melhor_Item'].str.extract(
+                r'(?P<prazo>\d{1,3})x[:\s-]*\s*(?P<valor>[\d.,]+)[^\d]*(?P<parcela>[\d.,]+)'
+            )
 
             df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
             df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'].str.replace(',', ''), errors='coerce')
             df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'].str.replace(',', ''), errors='coerce')
 
+            df_falha_extracao = df[df['Melhor_Item'].notna() & extracoes.isna().any(axis=1)]
+            if not df_falha_extracao.empty:
+                st.warning("⚠️ Algumas linhas falharam na extração da Melhor_Item:")
+                st.write(df_falha_extracao[['Melhor_Item']])
+
         df = df.loc[~df['MG_Beneficio_Saque_Disponivel'].isna()]
         df = df.loc[df['valor_liberado_beneficio'] > 0]
 
-        df['CPF'] = df['CPF'].str.replace(r'\D', '', regex=True)
+        df['CPF'] = df['CPF'].astype(str).str.replace(r'\D', '', regex=True)
         df['Nome_Cliente'] = df['Nome_Cliente'].str.title()
 
         df = df[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
@@ -113,9 +117,9 @@ if arquivo_novo:
     valor_limite = st.sidebar.number_input("Valor Máximo de Margem Empréstimo", value=0.0)
     novos_resultados = []
     for arq in arquivo_novo:
-        sep_novo = detectar_separador(arq)
-        df_novo = pd.read_csv(arq, sep=sep_novo, encoding='latin1', low_memory=False)
-        df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
+        sep = detectar_separador(arq)
+        df_novo = pd.read_csv(arq, sep=sep, encoding='latin1', low_memory=False)
+        df_novo['CPF'] = df_novo['CPF'].astype(str).str.replace(r'\D', '', regex=True)
         df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)
         df_novo = df_novo[['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']].drop_duplicates('CPF')
         novos_resultados.append(df_novo)
@@ -154,5 +158,3 @@ if not base_final.empty:
     st.download_button("📥 Baixar Resultado CSV", data=csv, file_name=f'{base_final["Convenio"].iloc[0]}_BENEFICIO_{equipe}.csv', mime='text/csv')
 else:
     st.info("Faça o upload de pelo menos um arquivo Master ou de Margem.")
-
-st.write(base_final)
