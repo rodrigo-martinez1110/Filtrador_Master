@@ -63,8 +63,11 @@ def processar_arquivos(files):
             )
 
             df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
-            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'].str.replace(',', ''), errors='coerce')
-            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'].str.replace(',', ''), errors='coerce')
+            extracoes['valor'] = extracoes['valor'].astype(str).str.replace(',', '')
+            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'], errors='coerce')
+
+            extracoes['parcela'] = extracoes['parcela'].astype(str).str.replace(',', '')
+            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'], errors='coerce')
 
             df_falha_extracao = df[df['Melhor_Item'].notna() & extracoes.isna().any(axis=1)]
             if not df_falha_extracao.empty:
