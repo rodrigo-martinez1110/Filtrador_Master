@@ -27,7 +27,7 @@ def encontrar_melhor_item(linha):
     melhor_item = None
     for item in linha:
         if pd.notna(item):
-            match = re.search(r'(\d+)x', str(item))
+            match = re.search(r'(\d+)x:', str(item))
             if match:
                 parcela = int(match.group(1))
                 if parcela > maior_parcela:
@@ -35,19 +35,13 @@ def encontrar_melhor_item(linha):
                     melhor_item = item
     return melhor_item
 
-def detectar_separador(file):
-    sample = file.read(2048).decode('latin1')
-    file.seek(0)
-    return ';' if sample.count(';') > sample.count(',') else ','
-
 @st.cache_data
 def processar_arquivos(files):
     resultado = []
     progress = st.progress(0)
 
     for i, file in enumerate(files):
-        sep = detectar_separador(file)
-        df = pd.read_csv(file, sep=sep, encoding='latin1', low_memory=False)
+        df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
 
         if 'Observacoes' in df.columns:
             colunas_separadas = df['Observacoes'].str.split('|', expand=True)
@@ -56,29 +50,18 @@ def processar_arquivos(files):
 
             colunas_observacoes = [col for col in df.columns if col.startswith("Observacao_")]
             df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
+
             df['Melhor_Item'] = df['Melhor_Item'].fillna('')
-
-            extracoes = df['Melhor_Item'].str.extract(
-                r'(?P<prazo>\d{1,3})x[:\s-]*\s*(?P<valor>[\d.,]+)[^\d]*(?P<parcela>[\d.,]+)'
-            )
-
-            # ✅ Correção dos .str em valores que podem ter NaN
-            extracoes['valor'] = extracoes['valor'].astype(str).str.replace(',', '', regex=False)
-            extracoes['parcela'] = extracoes['parcela'].astype(str).str.replace(',', '', regex=False)
+            extracoes = df['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)')
 
             df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
-            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'], errors='coerce')
-            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'], errors='coerce')
-
-            df_falha_extracao = df[df['Melhor_Item'].notna() & extracoes.isna().any(axis=1)]
-            if not df_falha_extracao.empty:
-                st.warning("⚠️ Algumas linhas falharam na extração da Melhor_Item:")
-                st.write(df_falha_extracao[['Melhor_Item']])
+            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'].str.replace(',', ''), errors='coerce')
+            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'].str.replace(',', ''), errors='coerce')
 
         df = df.loc[~df['MG_Beneficio_Saque_Disponivel'].isna()]
         df = df.loc[df['valor_liberado_beneficio'] > 0]
 
-        df['CPF'] = df['CPF'].astype(str).str.replace(r'\D', '', regex=True)
+        df['CPF'] = df['CPF'].str.replace(r'\D', '', regex=True)
         df['Nome_Cliente'] = df['Nome_Cliente'].str.title()
 
         df = df[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
@@ -107,6 +90,7 @@ with st.sidebar.expander("Filtradores"):
     equipe = st.selectbox("Selecione a Equipe", equipes_konsi)
     comissao_banco = st.number_input("Comissão do banco (%): ", value=0.00) / 100
     comissao_minima = st.number_input("Comissão mínima: ", value=0.0)
+    
 
 # Processamento principal
 base_final = pd.DataFrame()
@@ -121,9 +105,8 @@ if arquivo_novo:
     valor_limite = st.sidebar.number_input("Valor Máximo de Margem Empréstimo", value=0.0)
     novos_resultados = []
     for arq in arquivo_novo:
-        sep = detectar_separador(arq)
-        df_novo = pd.read_csv(arq, sep=sep, encoding='latin1', low_memory=False)
-        df_novo['CPF'] = df_novo['CPF'].astype(str).str.replace(r'\D', '', regex=True)
+        df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
+        df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
         df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)
         df_novo = df_novo[['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']].drop_duplicates('CPF')
         novos_resultados.append(df_novo)
@@ -151,7 +134,9 @@ if not base_final.empty:
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
     base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
 
+    
     base_final = base_final.query('comissao_beneficio >= @comissao_minima')
+
     base_final['MG_Emprestimo_Disponivel'] = 0
 
     st.subheader("📊 Dados Processados")
