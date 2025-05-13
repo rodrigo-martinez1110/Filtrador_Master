@@ -56,17 +56,18 @@ def processar_arquivos(files):
 
             colunas_observacoes = [col for col in df.columns if col.startswith("Observacao_")]
             df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
-
             df['Melhor_Item'] = df['Melhor_Item'].fillna('')
+
             extracoes = df['Melhor_Item'].str.extract(
                 r'(?P<prazo>\d{1,3})x[:\s-]*\s*(?P<valor>[\d.,]+)[^\d]*(?P<parcela>[\d.,]+)'
             )
 
-            df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
-            extracoes['valor'] = extracoes['valor'].astype(str).str.replace(',', '')
-            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'], errors='coerce')
+            # ✅ Correção dos .str em valores que podem ter NaN
+            extracoes['valor'] = extracoes['valor'].astype(str).str.replace(',', '', regex=False)
+            extracoes['parcela'] = extracoes['parcela'].astype(str).str.replace(',', '', regex=False)
 
-            extracoes['parcela'] = extracoes['parcela'].astype(str).str.replace(',', '')
+            df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
+            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'], errors='coerce')
             df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'], errors='coerce')
 
             df_falha_extracao = df[df['Melhor_Item'].notna() & extracoes.isna().any(axis=1)]
