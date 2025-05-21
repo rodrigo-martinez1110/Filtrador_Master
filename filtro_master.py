@@ -44,7 +44,7 @@ def processar_arquivos(files):
         df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
 
         if 'Observacoes' in df.columns:
-            colunas_separadas = df['Observacoes'].str.split('|', expand=True)
+            colunas_separadas = df['Observacoes'].fillna('').astype(str).str.split('|', expand=True)
             colunas_separadas.columns = [f'Observacao_{i+1}' for i in range(colunas_separadas.shape[1])]
             df = pd.concat([df, colunas_separadas], axis=1)
 
