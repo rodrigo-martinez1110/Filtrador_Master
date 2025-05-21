@@ -44,7 +44,6 @@ def processar_arquivos(files):
         df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
 
         if 'Observacoes' in df.columns:
-            df['Observacoes'] = df['Observacoes'].astype(str)
             colunas_separadas = df['Observacoes'].str.split('|', expand=True)
             colunas_separadas.columns = [f'Observacao_{i+1}' for i in range(colunas_separadas.shape[1])]
             df = pd.concat([df, colunas_separadas], axis=1)
@@ -91,7 +90,7 @@ with st.sidebar.expander("Filtradores"):
     equipe = st.selectbox("Selecione a Equipe", equipes_konsi)
     comissao_banco = st.number_input("Comissão do banco (%): ", value=0.00) / 100
     comissao_minima = st.number_input("Comissão mínima: ", value=0.0)
-    
+
 
 # Processamento principal
 base_final = pd.DataFrame()
@@ -135,7 +134,7 @@ if not base_final.empty:
     base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
     base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
 
-    
+
     base_final = base_final.query('comissao_beneficio >= @comissao_minima')
 
     base_final['MG_Emprestimo_Disponivel'] = 0
