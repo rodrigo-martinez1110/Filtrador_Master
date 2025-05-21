@@ -42,13 +42,14 @@ def processar_arquivos(files):
 
     for i, file in enumerate(files):
         df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
+        st.write(df)
 
-        if 'Observacoes' in df.columns:
-            colunas_separadas = df['Observacoes'].fillna('').astype(str).str.split('|', expand=True)
-            colunas_separadas.columns = [f'Observacao_{i+1}' for i in range(colunas_separadas.shape[1])]
+        if 'Simulacoes' in df.columns:
+            colunas_separadas = df['Simulacoes'].fillna('').astype(str).str.split('|', expand=True)
+            colunas_separadas.columns = [f'Simulacoes_{i+1}' for i in range(colunas_separadas.shape[1])]
             df = pd.concat([df, colunas_separadas], axis=1)
 
-            colunas_observacoes = [col for col in df.columns if col.startswith("Observacao_")]
+            colunas_observacoes = [col for col in df.columns if col.startswith("Simulacoes_")]
             df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
 
             df['Melhor_Item'] = df['Melhor_Item'].fillna('')
@@ -122,6 +123,7 @@ if arquivo_novo:
             base_final[col] = base_final[f"{col}_novo"].combine_first(base_final[col])
             base_final.drop(columns=[f"{col}_novo"], inplace=True)
         base_final = base_final.query('MG_Emprestimo_Disponivel <= @valor_limite')
+
 
 if not base_final.empty:
     for col in colunas_finais:
