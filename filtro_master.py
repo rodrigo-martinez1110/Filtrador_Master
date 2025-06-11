@@ -2,11 +2,14 @@ import streamlit as st
 import pandas as pd
 import re
 from datetime import datetime
+import io
 
-st.set_page_config(page_title="Processador de Arquivos Master", layout="wide")
-st.title("Processador de Arquivos Master")
+# Configuração da página do Streamlit
+st.set_page_config(page_title="Processador de Simulações", layout="wide")
+st.title("Processador de Arquivos com Simulações")
 pd.set_option("display.max_columns", None)
 
+# Lista de colunas que esperamos ter no resultado final.
 colunas_finais = [
     'Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
     'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
@@ -22,7 +25,12 @@ colunas_finais = [
     'Campanha'
 ]
 
+# --- Funções de Apoio ---
+
 def encontrar_melhor_item(linha):
+    """
+    Percorre as simulações de uma linha e retorna a que tiver o maior número de parcelas.
+    """
     maior_parcela = 0
     melhor_item = None
     for item in linha:
@@ -36,116 +44,163 @@ def encontrar_melhor_item(linha):
     return melhor_item
 
 @st.cache_data
-def processar_arquivos(files):
-    resultado = []
-    progress = st.progress(0)
+def processar_arquivos_simulacoes(files):
+    """
+    Função principal para processar os arquivos e extrair dados da coluna 'Simulacoes'.
+    """
+    if not files:
+        return pd.DataFrame()
+
+    lista_dfs = []
+    progress = st.progress(0, text="Processando arquivos...")
 
     for i, file in enumerate(files):
-        df = pd.read_csv(file, sep=',', encoding='latin1', low_memory=False)
-        st.write(df)
+        st.write(f"--- Processando arquivo: `{file.name}` ---")
+        
+        file.seek(0)
+        content_bytes = file.read()
+        
+        try:
+            primeira_linha = content_bytes.splitlines()[0].decode('latin1')
+            sep = ';' if primeira_linha.count(';') > primeira_linha.count(',') else ','
+            st.info(f"Separador detectado para '{file.name}': '{sep}'")
+            
+            file_buffer = io.BytesIO(content_bytes)
+            df = pd.read_csv(file_buffer, sep=sep, encoding='latin1', low_memory=False, dtype=str)
 
+        except Exception as e:
+            st.error(f"Não foi possível ler o arquivo {file.name}. Erro: {e}")
+            continue
+
+        st.write("Colunas encontradas:", df.columns.tolist())
+        st.dataframe(df.head(3))
+
+        df['prazo_beneficio'] = pd.NA
+        df['valor_liberado_beneficio'] = pd.NA
+        df['valor_parcela_beneficio'] = pd.NA
+        
         if 'Simulacoes' in df.columns:
+            st.write("Coluna 'Simulacoes' encontrada. Extraindo a melhor oferta...")
             colunas_separadas = df['Simulacoes'].fillna('').astype(str).str.split('|', expand=True)
-            colunas_separadas.columns = [f'Simulacoes_{i+1}' for i in range(colunas_separadas.shape[1])]
-            df = pd.concat([df, colunas_separadas], axis=1)
+            colunas_separadas.columns = [f'Simulacoes_{j+1}' for j in range(colunas_separadas.shape[1])]
+            
+            df['Melhor_Item'] = colunas_separadas.apply(encontrar_melhor_item, axis=1)
+            
+            extracoes = df['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)', expand=True)
+            
+            if not extracoes.empty:
+                df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
+                
+                # --- LÓGICA DE CONVERSÃO DE NÚMERO CORRIGIDA ---
+                valor = extracoes['valor'].copy().astype(str)
+                parcela = extracoes['parcela'].copy().astype(str)
 
-            colunas_observacoes = [col for col in df.columns if col.startswith("Simulacoes_")]
-            df['Melhor_Item'] = df[colunas_observacoes].apply(encontrar_melhor_item, axis=1)
+                # Máscara para identificar formato PT-BR (que contém vírgula)
+                mask_valor_br = valor.str.contains(',', na=False)
+                mask_parcela_br = parcela.str.contains(',', na=False)
 
-            df['Melhor_Item'] = df['Melhor_Item'].fillna('')
-            extracoes = df['Melhor_Item'].str.extract(r'(?P<prazo>\d+)x: (?P<valor>[\d.,]+) \(parcela: (?P<parcela>[\d.,]+)\)')
+                # Para formato PT-BR: remove pontos de milhar e troca vírgula por ponto decimal
+                valor[mask_valor_br] = valor[mask_valor_br].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                parcela[mask_parcela_br] = parcela[mask_parcela_br].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                
+                # Converte para numérico. Formatos sem vírgula (ex: 1722.47) são convertidos diretamente.
+                df['valor_liberado_beneficio'] = pd.to_numeric(valor, errors='coerce')
+                df['valor_parcela_beneficio'] = pd.to_numeric(parcela, errors='coerce')
+                
+                st.success("Extração e conversão da coluna 'Simulacoes' concluída.")
+            else:
+                 st.warning("Não foi possível extrair dados do formato esperado na coluna 'Melhor_Item'.")
+        else:
+            st.warning(f"Coluna 'Simulacoes' não encontrada no arquivo {file.name}.")
 
-            df['prazo_beneficio'] = pd.to_numeric(extracoes['prazo'], errors='coerce')
-            df['valor_liberado_beneficio'] = pd.to_numeric(extracoes['valor'].str.replace(',', ''), errors='coerce')
-            df['valor_parcela_beneficio'] = pd.to_numeric(extracoes['parcela'].str.replace(',', ''), errors='coerce')
+        if 'CPF' in df.columns:
+            df['CPF'] = df['CPF'].str.replace(r'\D', '', regex=True)
+        if 'Nome_Cliente' in df.columns:
+            df['Nome_Cliente'] = df['Nome_Cliente'].str.title()
+            
+        df = df.loc[df['valor_liberado_beneficio'].fillna(0) > 0]
+        
+        # --- FILTRO DE MARGEM CORRIGIDO ---
+        if 'MG_Beneficio_Saque_Disponivel' in df.columns:
+             df = df.loc[pd.to_numeric(df['MG_Beneficio_Saque_Disponivel'].fillna(0), errors='coerce') >= 0]
+        
+        st.write(f"Linhas restantes após filtros: {len(df)}")
+        lista_dfs.append(df)
+        progress.progress((i + 1) / len(files), text=f"Processando {file.name}...")
 
-        df = df.loc[~df['MG_Beneficio_Saque_Disponivel'].isna()]
-        df = df.loc[df['valor_liberado_beneficio'] > 0]
+    if not lista_dfs:
+        return pd.DataFrame()
 
-        df['CPF'] = df['CPF'].str.replace(r'\D', '', regex=True)
-        df['Nome_Cliente'] = df['Nome_Cliente'].str.title()
+    resultado_final = pd.concat(lista_dfs, ignore_index=True)
+    st.success("Todos os arquivos foram processados!")
+    return resultado_final
 
-        df = df[['Origem_Dado', 'Nome_Cliente', 'Matricula', 'CPF', 'Data_Nascimento',
-                 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel',
-                 'MG_Beneficio_Saque_Total', 'MG_Beneficio_Saque_Disponivel',
-                 'MG_Cartao_Total', 'MG_Cartao_Disponivel',
-                 'Convenio', 'Vinculo_Servidor', 'Lotacao', 'Secretaria',
-                 'valor_liberado_beneficio', 'valor_parcela_beneficio', 'prazo_beneficio', 'Saldo_Devedor']]
+# --- Interface do Usuário (Sidebar) ---
 
-        resultado.append(df)
-        progress.progress((i + 1) / len(files))
+st.sidebar.header("Uso do App")
+st.sidebar.info(
+    "1. Faça o upload de um ou mais arquivos CSV.\n"
+    "2. O app buscará a coluna 'Simulacoes', extrairá a melhor oferta de saque.\n"
+    "3. Defina os parâmetros de comissão e equipe.\n"
+    "4. Baixe o resultado final."
+)
 
-    return pd.concat(resultado, ignore_index=True)
+st.sidebar.header("📂 Upload de Arquivos")
+uploaded_files = st.sidebar.file_uploader(
+    "Selecione os arquivos para processar",
+    type="csv",
+    accept_multiple_files=True
+)
 
-# Sidebar
-st.sidebar.subheader("📂 Arquivos Master")
-uploaded_files = st.sidebar.file_uploader("Selecione os arquivos Master", type="csv", accept_multiple_files=True)
-
-st.sidebar.subheader("📂 Arquivos com Margem")
-arquivo_novo = st.sidebar.file_uploader("Arquivo com margem (opcional)", type="csv", accept_multiple_files=True)
-
-st.sidebar.subheader("Filtros")
-with st.sidebar.expander("Filtradores"):
-    apenas_saque_complementar = st.checkbox("Saldo Devedor maior que 0")
+st.sidebar.header("⚙️ Parâmetros de Saída")
+with st.sidebar.expander("Definir Parâmetros", expanded=True):
     equipes_konsi = ['outbound', 'csapp', 'csport', 'cscdx', 'csativacao', 'cscp']
     equipe = st.selectbox("Selecione a Equipe", equipes_konsi)
-    comissao_banco = st.number_input("Comissão do banco (%): ", value=0.00) / 100
-    comissao_minima = st.number_input("Comissão mínima: ", value=0.0)
+    comissao_banco = st.number_input("Comissão do banco (%)", value=10.0, step=0.5, min_value=0.0) / 100
+    comissao_minima = st.number_input("Comissão mínima (R$)", value=50.0, step=10.0, min_value=0.0)
 
-
-# Processamento principal
-base_final = pd.DataFrame()
+# --- Lógica Principal de Processamento ---
 
 if uploaded_files:
-    base_final = processar_arquivos(uploaded_files)
-    if apenas_saque_complementar:
-        base_final = base_final.loc[base_final['Saldo_Devedor'] > 0]
-    st.success("Arquivo Master processado com sucesso!")
-
-if arquivo_novo:
-    valor_limite = st.sidebar.number_input("Valor Máximo de Margem Empréstimo", value=0.0)
-    novos_resultados = []
-    for arq in arquivo_novo:
-        df_novo = pd.read_csv(arq, sep=',', encoding='latin1', low_memory=False)
-        df_novo['CPF'] = df_novo['CPF'].str.replace(r'\D', '', regex=True)
-        df_novo = df_novo.sort_values(by='MG_Emprestimo_Disponivel', ascending=False)
-        df_novo = df_novo[['CPF', 'MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']].drop_duplicates('CPF')
-        novos_resultados.append(df_novo)
-
-    novo = pd.concat(novos_resultados, ignore_index=True)
-
-    csv_novo = novo.to_csv(sep=';', index=False).encode('utf-8')
-    st.sidebar.download_button("📥 Baixar Arquivo de Margem (Novo)", data=csv_novo, file_name=f'MG_EMP_CSV.csv', mime='text/csv')
+    base_final = processar_arquivos_simulacoes(uploaded_files)
 
     if not base_final.empty:
-        base_final = base_final.merge(novo, on='CPF', how='left', suffixes=('', '_novo'))
-        for col in ['MG_Emprestimo_Total', 'MG_Emprestimo_Disponivel', 'Vinculo_Servidor', 'Lotacao', 'Secretaria']:
-            base_final[col] = base_final[f"{col}_novo"].combine_first(base_final[col])
-            base_final.drop(columns=[f"{col}_novo"], inplace=True)
-        base_final = base_final.query('MG_Emprestimo_Disponivel <= @valor_limite')
+        st.subheader("📊 Dados Processados")
+
+        for col in colunas_finais:
+            if col not in base_final.columns:
+                base_final[col] = None
+
+        base_final['banco_beneficio'] = '243'
+        data_hoje = datetime.today().strftime('%d%m%Y')
+        convenio_str = base_final['Convenio'].str.lower().fillna('geral') if 'Convenio' in base_final.columns else pd.Series(['geral'] * len(base_final))
+        base_final['Campanha'] = convenio_str + '_' + data_hoje + '_benef_' + equipe
+
+        base_final['valor_liberado_beneficio'] = pd.to_numeric(base_final['valor_liberado_beneficio'], errors='coerce').fillna(0)
+        base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
+        base_final = base_final.query('comissao_beneficio >= @comissao_minima')
+
+        base_final['MG_Emprestimo_Disponivel'] = 0
+
+        colunas_existentes = [col for col in colunas_finais if col in base_final.columns]
+        base_final = base_final[colunas_existentes]
 
 
-if not base_final.empty:
-    for col in colunas_finais:
-        if col not in base_final.columns:
-            base_final[col] = None
+        st.dataframe(base_final.head(1000))
+        st.write(f"Total de registros no resultado final: **{base_final.shape[0]}**")
+        st.write(f"Total de colunas: **{base_final.shape[1]}**")
 
-    base_final = base_final[colunas_finais]
-    base_final['banco_beneficio'] = '243'
-    data_hoje = datetime.today().strftime('%d%m%Y')
-    base_final['Campanha'] = base_final['Convenio'].str.lower() + '_' + data_hoje + '_benef_' + equipe
-    base_final['comissao_beneficio'] = (base_final['valor_liberado_beneficio'] * comissao_banco).round(2)
-
-
-    base_final = base_final.query('comissao_beneficio >= @comissao_minima')
-
-    base_final['MG_Emprestimo_Disponivel'] = 0
-
-    st.subheader("📊 Dados Processados")
-    st.dataframe(base_final.head(1000))
-    st.write(base_final.shape)
-
-    csv = base_final.to_csv(sep=';', index=False).encode('utf-8')
-    st.download_button("📥 Baixar Resultado CSV", data=csv, file_name=f'{base_final["Convenio"].iloc[0]}_BENEFICIO_{equipe}.csv', mime='text/csv')
+        if not base_final.empty:
+            csv = base_final.to_csv(sep=';', index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            nome_convenio = base_final["Convenio"].iloc[0] if pd.notna(base_final["Convenio"].iloc[0]) else "GERAL"
+            
+            st.download_button(
+                label="📥 Baixar Resultado Final em CSV",
+                data=csv,
+                file_name=f'{nome_convenio}_BENEFICIO_{equipe.upper()}_{data_hoje}.csv',
+                mime='text/csv'
+            )
+    else:
+        st.warning("O processamento não resultou em dados válidos. Verifique o conteúdo dos arquivos e os filtros.")
 else:
-    st.info("Faça o upload de pelo menos um arquivo Master ou de Margem.")
+    st.info("Aguardando o upload de arquivos para iniciar o processamento.")
