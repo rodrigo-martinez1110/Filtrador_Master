@@ -159,6 +159,7 @@ with st.sidebar.expander("Definir Parâmetros", expanded=True):
     comissao_banco = st.number_input("Comissão do banco (%)", value=10.0, step=0.5, min_value=0.0) / 100
     comissao_minima = st.number_input("Comissão mínima (R$)", value=50.0, step=10.0, min_value=0.0)
 
+filtrar_saldo_devedor = st.sidebar.checkbox("Apenas com saldo devedor > 0", value=False)
 # --- Lógica Principal de Processamento ---
 
 if uploaded_files:
@@ -171,6 +172,11 @@ if uploaded_files:
             if col not in base_final.columns:
                 base_final[col] = None
 
+
+
+        if filtrar_saldo_devedor and "Saldo_Devedor" in base_final.columns:
+            base_final["Saldo_Devedor"] = pd.to_numeric(base_final["Saldo_Devedor"], errors="coerce").fillna(0)
+            base_final = base_final.loc[base_final["Saldo_Devedor"] > 0]
         base_final['banco_beneficio'] = '243'
         data_hoje = datetime.today().strftime('%d%m%Y')
         convenio_str = base_final['Convenio'].str.lower().fillna('geral') if 'Convenio' in base_final.columns else pd.Series(['geral'] * len(base_final))
